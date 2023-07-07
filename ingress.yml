@@ -1,0 +1,181 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingressvote
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: default-basicauth@kubernetescrd, default-myipwhitelist@kubernetescrd, default-redirect@kubernetescrd, default-sso@kubernetescrd
+    cert-manager.io/issuer: "le-example-http"
+    traefik.ingress.kubernetes.io/router.tls.options: default-clientcert@kubernetescrd
+spec:
+  tls:
+    - hosts:
+      - voteapple.distributeur-de-pain.best
+      secretName: tls-whoami-ingress-http
+  rules:
+  - host: "voteapple.distributeur-de-pain.best"
+    http:
+      paths:
+      - pathType: ImplementationSpecific
+        path: /
+        backend:
+          service:
+            name: clustvoteapp
+            port:
+              number: 80
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: basicauth
+spec:
+  basicAuth:
+    secret: authsecret
+    removeHeader: false
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: myipwhitelist
+spec:
+  ipWhiteList:
+    sourceRange:
+      - 1.2.3.4
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+ name: le-example-http
+spec:
+ acme:
+   email: xufremiyumi-5776@yopmail.com
+   # We use the staging server here for testing to avoid hitting
+   server: https://acme-v02.api.letsencrypt.org/directory
+   privateKeySecretRef:
+     # if not existing, it will register a new account and stores it
+     name: example-issuer-account-key
+   solvers:
+     - http01:
+         # The ingressClass used to create the necessary ingress routes
+         ingress:
+           class: traefik
+---
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: clientcert
+spec:
+  minVersion: VersionTLS12
+  maxVersion: VersionTLS13
+  clientAuth:
+    secretNames:
+      - client-auth-ca-cert
+    clientAuthType: RequireAndVerifyClientCert
+  curvePreferences:
+    - CurveP521
+    - CurveP384
+  cipherSuites:
+    - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+    - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+    - TLS_AES_256_GCM_SHA384
+    - TLS_CHACHA20_POLY1305_SHA256
+  sniStrict: true
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: sso
+spec:
+  forwardAuth:
+    address: http://traefik-sso:4181
+    authResponseHeaders: 
+        - "X-Forwarded-User"
+    trustForwardHeader: true
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: traefik-sso
+spec:
+  selector:
+    app: traefik-sso
+  ports:
+  - protocol: TCP
+    port: 4181
+    targetPort: 4181
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: traefik-sso
+  name: traefik-sso
+spec:
+  progressDeadlineSeconds: 2147483647
+  replicas: 1
+  revisionHistoryLimit: 2147483647
+  selector:
+    matchLabels:
+      app: traefik-sso
+      name: traefik-sso
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: traefik-sso
+        name: traefik-sso
+    spec:
+      containers:
+      - env:
+        - name: PROVIDERS_GOOGLE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              key: clientid
+              name: secretoat
+        - name: PROVIDERS_GOOGLE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              key: clientsecret
+              name: secretoat
+        - name: SECRET
+          valueFrom:
+            secretKeyRef:
+              key: secret
+              name: secretoat
+        - name: COOKIE_DOMAIN
+          value: distributeur-de-pain.best
+        - name: AUTH_HOST
+          value: voteapple.distributeur-de-pain.best
+        - name: INSECURE_COOKIE
+          value: "false"
+        - name: WHITELIST
+          value: leirbag1103@gmail.com
+        - name: LOG_LEVEL
+          value: debug
+        image: thomseddon/traefik-forward-auth:2
+        imagePullPolicy: Always
+        name: traefik-sso
+        ports:
+        - containerPort: 4181
+          protocol: TCP
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+status: {}
